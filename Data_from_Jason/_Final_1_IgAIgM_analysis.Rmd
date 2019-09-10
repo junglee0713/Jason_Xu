@@ -1,0 +1,556 @@
+---
+title: "IDAHO Analysis"
+output: html_notebook
+---
+
+
+```{r setup, include=FALSE}
+library(tidyverse)
+setwd('~/Box/_Penn/2_Rotation_M-Silverman/R-idaho')
+```
+
+### Background and Objectives
+
+Immunoglobulin A, existing in a monomeric, serum form and a  dimeric, secreted form, accounts for more than 70% of total immunoglobulin in the body. Due to its ability to transcytose epithelia and be secreted, IgA predominates at mucosal surfaces such as the gut, nasal passages, and lungs. 
+
+Selective IgA deficiency is most common primary immune deficiency in humans and occurs in 1/500-700 caucasians. Although IgA deficiency can be clinically diagnosed by the lack of serum IgA, it is often labeled as "asymptomatic" in comparison to other immunoglobulin deficiencies, which confer a dramatically elevated risk of infection and death. It has long been suggested that the relatively asymptomatic nature of IgA deficiency is due to IgM transcytosis across the gut epithelia into the lumen using the same secretory transporter as IgA, the polymeric Ig receptor. In mice, absence of this receptor leads to drastically elevated susceptibility to mucosal infections (not observed in IgA deficiency alone), and in humans, absence of the pIgR is assumed to be lethal, since it has never been observed. Although IgM may serve as a "backup" to IgA in the gut lumen in preventing mucosal infection and systemic spread of commensal bacteria, it may not replicate the functions of IgA in their entirety.
+
+Although most patients with IgA deficiency do not have overt susceptibility to opportunistic infections, many of them are at elevated risk for autoimmune disease and allergy to environmental antigens. This is especially apparent in Celiac Disease (gluten allergy), where the clinical diagnosis relies on measurement of IgA antibodies against the gliadin, tTG, and EMA proteins, but up to 10% of patients have IgA deficiency. In these patients, serum IgA levels must be collected at the time of diagnosis to rule false negatives out. IgA deficient patients also make up higher than expected preportions of patients with Grave's Disease, T1DM, Lupus (SLE), Rheumatoid Arthritis, and Myasthenia Gravis. One possible explanation for this is that selective IgA deficiency, which is linked to several immune-related loci (including MHC), co-segregates with risk for these autoimmune diseases. However, in accordance with a slew of evidence that show our commensal microbes playing a role in tuning our immune system, it is also plausible that loss of mucosal defense and heightened bacterial interaction with the mucosal immune system plays a role in causing autoimmunity. 
+
+In the present study we aim to quantify which microbes functionally interact with the immune system of IgA deficient patients in comparision to their healthy siblings. We have assembled a set of ___ patients and ___ healthy siblings to compare the commensal microbes that make up their stool and the fraction of stool commensals that they have serum antibodies against. The primary purpose of this analysis is to observe which microbial antibody responses are enriched in IgA deficient patients, with the hypothesis that IgG and IgM serve as backup mechanisms to "gate" commensal bacteria out of systemic compartments.
+
+
+Janeway -
+pg502-509 in gut
+pg424-425 transcytosis
+physical properties 5.20
+selective def. 509-510, 545
+serum level 5A.19
+
+
+# Importing Data Files
+```{r}
+setwd('~/Box/_Penn/2_Rotation_M-Silverman/R-idaho')
+
+#OTU Table #rows = OTUs, #columns = OTU-ID, gathered by sample ID
+bugs <- read_tsv('final-table.tsv') %>%
+  gather(key = "SampleID", value = "reads", -"OTUID")
+
+bugs2 <- read_tsv('~/Box/_Penn/2_Rotation_M-Silverman/R-idaho/final-table.tsv') %>%
+  gather(key = "SampleID", value = "reads", -"OTUID")
+
+#Taxonomy Table #rows = OTUs, #columns= OTU-ID, taxonomy
+bugnames <- read_tsv('taxonomy.tsv')
+
+bugnames <- bugnames %>% add_column(OTUnumber = c(1:1710))
+
+#stringr::str_split(bugnames$taxonomy, ';')
+
+bugname <- c()
+i <- 1
+for (s in stringr::str_split(bugnames$taxonomy, ';')) {
+  bugname[[i]] <- s[[length(s)]]
+  i <- i + 1
+}
+
+#if last item contain uncultured, or metagenome, go s-1
+
+bugnames <- bugnames %>% add_column(bugname)
+
+
+#joining Taxonomy to bugs
+bugs <- bugs %>% left_join(bugnames, by='OTUID')
+
+
+#Metadatafile, #rows = Samples, column = metadata parameters
+metadata <- read_tsv('~/Box/_Penn/2_Rotation_M-Silverman/R-idaho/m_idaho-combined-final.tsv') %>%
+  select(SampleID, SampleType, Population, study_group, Household, Condition)
+
+#joining metadata to bugs
+bugs <- bugs %>% left_join(metadata, by='SampleID')
+
+
+
+```
+
+# Isolating Data of Interest
+
+```{r}
+#creating column for total reads per sample
+totalreads <- bugs %>% group_by(SampleID) %>% 
+  summarize(totalreads = sum(reads))
+
+#Making FACS Populations as factor with different levels
+bugs$Population <- as.factor(bugs$Population)
+
+#abundance = reads + 1/ total reads, added pseudocount
+bugs <- bugs %>% left_join(totalreads, by= "SampleID") %>% 
+  mutate(abundance = (reads+1) / totalreads)
+```
+# Code book
+
+### data contained in each column
+
+OTUID = Operational Taxonomic Unit identifier that is not yet mapped to a particular taxa. OTU IDs are assigned to reads that have 99% similarity at the sequence level by our microbiome analysis pipeline in Qiime.
+
+SampleID = Patient identifier (familynumber.individualnumber.population.number), last row = Taxonomy
+
+SampleType = Deliniates whether sample is FACS sorted ("FACS") or from stool alone ("Feces")
+
+Population = 10 different populatons: 
+
+Household = 24 different families
+
+study_group = cases ("case") or controls ("control")
+
+### Data Exploration
+
+```{r}
+
+#visualizing raw data
+
+test <- bugs %>% group_by(study_group) %>% summarize(count = n_distinct(SampleID)) 
+
+ggplot(test) + geom_bar(aes(x = reorder(study_group, desc(count)), y = count), stat = "identity") + scale_y_continuous(breaks = 10 * 1:20) + xlab("study  group") + ylab("sample count")
+
+ggplot(group_by(bugs, by = "SampleID")) + stat_count(aes(x = study_group, fill = Condition)) + coord_flip() + scale_y_continuous(breaks = (14500 * 1:3), labels = (10 *1:3)) + facet_wrap(~ Population) + scale_fill_discrete(name = "Condition", labels = c("4A (Stool only)", "5A (Stool + Serum)", "NA (Feces)"))
+
+ggplot(group_by(bugs, by = "SampleID")) + stat_count(aes(x = study_group, fill = SampleID), show.legend = FALSE)+ scale_y_continuous(breaks = (14500 * 1:20), labels = (10* 1:20))
+
+bugs %>% count(study_group) %>% mutate(n = n/1450)
+```
+
+```{r}
+
+#FACS vs FECES
+
+#reads
+ggplot(bugs, aes(x=taxonomy, y=reads, color=SampleType)) + geom_point() +
+  geom_text(size = 0.5, aes(label=ifelse(reads>10000,as.character(bugname),'')),hjust=-0.1,vjust=-0.1)+
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) 
+
+#abudance
+ggplot(bugs, aes(x=taxonomy, y=abundance, color=SampleType)) + geom_point() +
+  geom_text(size = 2, aes(label=ifelse(abundance>.5,as.character(bugname),'')),hjust=-0.1,vjust=-0.1)+
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank())
+
+#Cases vs Controls
+ggplot(bugs, aes(x=taxonomy, y=abundance, color=SampleType)) + 
+  geom_point() + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  facet_wrap(~ study_group) +
+  geom_text(size = 1, aes(label=ifelse(abundance>.4,as.character(bugname),'')),hjust=-0.1,vjust=-0.1)
+  
+ggsave("CasesvsControls.jpg", plot=last_plot,width=5, height=5)
+
+#Cases vs Controls, Seperate by Family
+ggplot(bugs, aes(x=taxonomy, y=abundance, color=study_group)) + 
+  geom_point(alpha = .4) + 
+  facet_wrap(~ Household) + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  geom_text(size = .75, aes(label=ifelse(abundance>.2,as.character(bugname),'')),hjust=-0.1,vjust=-0.1)
+
+  #Cases vs Controls, Seperate by Population
+ggplot(bugs, aes(x=taxonomy, y=abundance, color=study_group)) + 
+  geom_point() + 
+  facet_wrap(~ Population) + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  geom_text(size = .7, aes(label=ifelse(abundance>.2,as.character(bugname),'')),hjust=-0.1,vjust=-0.1)
+
+ggsave("all_bugs_by_population.png", path = "~/Box/_Penn/2_Rotation_M-Silverman/R-idaho/plots")
+
+```
+
+# Which Microbes are bound by secretory IgA in controls?
+###Which microbes are bound by IgA in stool in controls(IgA+IgM+)
+
+```{r}
+#setwd('~/Box/_Penn/2_Rotation_M-Silverman/R-idaho/IgA_analysis/IgAIgM_enriched')
+
+"IgA+IgM+_all" <- bugs %>% filter(Population == "IgM+IgA+", study_group == "Control") %>%
+group_by(SampleID) %>%
+mutate(IgAAbundance = abundance) %>%
+arrange(desc(abundance))
+
+"AntibodyNeg" <- bugs %>% filter(Population == "IgA-IgM-IgG-", study_group == "Control", Condition == "4A") %>%
+group_by(SampleID) %>%
+mutate(ab_neg_Abundance = abundance) %>%
+arrange(desc(abundance))
+
+#creating a filterstring, bugs over 0.001 abundance in IgA+/IgM+
+
+IgA_highabundance <- `IgA+IgM+_all` %>% group_by(OTUID) %>%
+  summarize(meanOTU = mean(abundance)) %>%
+  filter(meanOTU > .001)
+
+#makingfilterstring
+IgA_filterstring <- IgA_highabundance$OTUID 
+  
+#addingbugnames to filterstring
+IgA_highabundance <- IgA_highabundance %>% left_join(select(bugnames, OTUnumber, taxonomy, OTUID), by = "OTUID")
+
+#filtering IgG and IgGneg by filterstring
+highabundancebugs_IgA_0_001 <- `IgA+IgM+_all` %>% filter(OTUID %in% IgA_filterstring)%>% arrange(bugname)
+highabundancebugs_IgAneg_0_001 <- AntibodyNeg %>% filter(OTUID %in% IgA_filterstring) %>% arrange(bugname)
+
+#calculatingmedianIgAenrichment in each OTU
+
+enrichment_IgA <- `highabundancebugs_IgA_0_001` %>% group_by(OTUnumber) %>% summarize(median_IgA_abundance = median(IgAAbundance))
+enrichment_IgA_neg <- `highabundancebugs_IgAneg_0_001` %>% group_by(OTUnumber) %>% summarize(median_abneg_abundance = median(ab_neg_Abundance))
+enrichment_IgA <- left_join(enrichment_IgA, enrichment_IgA_neg, by = "OTUnumber")
+enrichment_IgA <- enrichment_IgA %>% mutate("medianIgAenrichment" = median_IgA_abundance/median_abneg_abundance)
+
+                                                                                      
+                                                                                     
+  
+#generating a MW_pvalue for each OTU
+
+enrichment_IgA[, "MWtest_pvalue"] <- NA
+
+IgA_pvalue <- `highabundancebugs_IgA_0_001` %>% select(taxonomy, OTUnumber, bugname, SampleID, IgAAbundance, SampleID, Household) %>% group_by(OTUnumber)
+IgA_pvalue_neg <- `highabundancebugs_IgAneg_0_001` %>% select(taxonomy, OTUnumber, bugname, SampleID, SampleID, Household, ab_neg_Abundance) %>% group_by(OTUnumber)
+
+colnames(IgA_pvalue)[2] <- "OTUnumber"
+
+hi <- IgA_pvalue[which(IgA_pvalue$OTUnumber == 19), ]
+hi2 <- IgA_pvalue_neg[which(IgA_pvalue_neg$OTUnumber == 19), ]
+
+bye <- wilcox.test(hi$IgAAbundance,hi2$ab_neg_Abundance)
+
+for (i in 1:nrow(enrichment_IgA)){
+  for (j in 1:nrow(IgA_pvalue)){
+    if (enrichment_IgA$OTUnumber[i] == IgA_pvalue$OTUnumber[j]){
+      hi <- IgA_pvalue[which(IgA_pvalue$OTUnumber == IgA_pvalue$OTUnumber[j]), ]
+      hi2 <- IgA_pvalue_neg[which(IgA_pvalue_neg$OTUnumber == IgA_pvalue$OTUnumber[j]), ]
+      bye <- wilcox.test(hi$IgAAbundance, hi2$ab_neg_Abundance)
+      enrichment_IgA$MWtest_pvalue[i] <- bye$p.value
+    }
+  }
+}
+
+#adding taxonomy
+enrichment_IgA <- enrichment_IgA %>% left_join(select(bugnames, "OTUnumber", "taxonomy", "bugname"), by = "OTUnumber")
+```
+
+```{r}
+#volcanoplot
+ggplot(enrichment_IgA, aes(x=medianIgAenrichment, y=MWtest_pvalue, size = median_IgA_abundance)) + 
+  geom_point(alpha = 0.6) + 
+  geom_text(size = 1.5, aes(label=ifelse(MWtest_pvalue < .0004 ,as.character(bugname),'')),hjust=0,vjust=0) + scale_y_log10() + 
+  scale_x_log10(breaks = c(0.01, 0.1, 1, 10, 100, 1000), labels = c(0.01, 0.1, 1, 10, 100, 1000)) + 
+  expand_limits(x = c(1e-03, 1e4) ) +
+  labs(title = "Enrichment in the IgA+IgM+ Fraction of Controls", x = "median enrichment", y = "P Value (MW test)")
+
+ggplot(enrichment_IgA, aes(x=medianIgAenrichment, y=MWtest_pvalue, size = median_IgA_abundance)) + 
+  geom_point(alpha = 0.6) + 
+  geom_text(size = 1.5, aes(label=ifelse(MWtest_pvalue < .0004 ,as.character(bugname),'')),hjust=0,vjust=0) + scale_y_log10() + 
+  scale_x_continuous(trans = "log2", breaks = 2^c(-10:10), labels = c(-10:10)) + 
+  expand_limits(x = c(2^-5, 2^8)) +
+  labs(title = "Enrichment in the IgA+IgM+ Fraction of Controls", x = "log 2 median enrichment", y = "P Value (MW test)")
+
+ 2^c(1:10)
+#ggsave(file.choose())
+
+ggsave("~/Box/_Penn/2_Rotation_M-Silverman/R-idaho/IgA_analysis/Q2_IgA_and_IgM_positive_microbes/1_IgAIgM_enriched_controls/IgAIgMpos_enrichment_size_equal_abundance_control_only.png")
+```
+
+```{r}
+#filtering based on p<1e-4, enrichment > 10
+
+#moving taxonomy to front
+enrichment_IgA <- enrichment_IgA[,c(1, 6, 7, 2, 3, 4, 5)]
+
+#crosschecktable
+cross_check_IgA <- (enrichment_IgA %>% filter(medianIgAenrichment > 5, MWtest_pvalue < .0004))
+
+ggplot(bugs %>% filter(study_group == "Control", OTUnumber %in% c(cross_check_IgA$OTUnumber),  Population %in% c("IgA-IgM-IgG-", "IgM+IgA+", "IgA+IgM-", "IgA+IgG-"), Condition == "4A"), aes(x=Population, y=abundance)) +
+  ggtitle("IgA+IgM+ enriched bugs")+
+  geom_point(alpha = .5) + 
+  geom_text(size = 3, aes(label=ifelse(abundance > 0 ,as.character(Household),'')),hjust=-0.1,vjust=-.1) + 
+  scale_y_log10() + 
+  stat_summary(fun.y = median, fun.ymin = median, fun.ymax = median, geom = "crossbar", width = 0.5, color = "red1") +
+  facet_wrap(~ bugname) +
+  theme(axis.text.x = element_text(angle=60, hjust=1))
+
+
+ggsave("IgAIgMpos_OTU_all.png", path= "~/Box/_Penn/2_Rotation_M-Silverman/R-idaho/IgA_analysis/Q2_IgA_and_IgM_positive_microbes/1_IgAIgM_enriched_controls")
+
+write.csv(cross_check_IgA, "~/Box/_Penn/2_Rotation_M-Silverman/R-idaho/IgA_analysis/Q2_IgA_and_IgM_positive_microbes/1_IgAIgM_enriched_controls/top_hits_IgAIgM.csv")
+write.csv(enrichment_IgA, "~/Box/_Penn/2_Rotation_M-Silverman/R-idaho/IgA_analysis/Q2_IgA_and_IgM_positive_microbes/1_IgAIgM_enriched_controls/all_OTU_over_0_001")
+
+```
+###What happens to these microbes in cases?
+
+```{r}
+#Cases
+
+ggplot(bugs %>% filter(OTUnumber %in% c(cross_check_IgA$OTUnumber), study_group %in% c("Case", "Control")), aes(x=study_group, y=abundance, color = study_group)) +
+  ggtitle("IgA+IgM+ enriched bugs")+
+  geom_point(alpha = .5) + 
+  geom_text(size = 3, aes(label=ifelse(abundance > 0 ,as.character(Household),'')),hjust=-0.1,vjust=-.1) + 
+  scale_y_log10() + 
+  stat_summary(fun.y = median, fun.ymin = median, fun.ymax = median, geom = "crossbar", width = 0.5, color = "yellow1") +
+  facet_grid(bugname ~ Population) +
+  theme(axis.text.x = element_text(angle=60, hjust=1))
+  
+  ggplot(bugs %>% filter(OTUnumber %in% c(cross_check_IgA$OTUnumber), study_group %in% c("Case", "Control")), aes(x=study_group, y=abundance, color = study_group)) +
+  ggtitle("IgA+IgM+ enriched bugs")+
+  geom_boxplot() + 
+  facet_grid(bugname ~ Population) + scale_y_log10() +
+  theme(axis.text.x = element_text(angle=60, hjust=1))
+  
+ggsave("IgAIgMpos_OTU_casesvscontrols.png", path= "~/Box/_Penn/2_Rotation_M-Silverman/R-idaho/IgA_analysis/Q2_IgA_and_IgM_positive_microbes/1_IgAIgM_enriched_controls")
+
+```
+
+
+###Which microbes are bound by IgA in stool in controls(IgA+IgM-)?
+
+
+#filtering on quadrant 4
+enrichment_IgA %>% filter(medianIgAenrichment > 10, MWtest_pvalue < (1e-6))
+```
+
+
+### Exploring the IgG+/IgM- fraction
+```{r}
+
+#filtering all rows for IgG+ IgM- population, creating column of logIgG abundance
+IgG <- bugs %>% filter(Population == "IgG+IgM-") %>%
+group_by(SampleID) %>%
+mutate(logIgGAbundance = log(abundance)) %>%
+arrange(desc(abundance))
+
+##filtering all rows for IgA-IgM-IgG- population, creating column of log(abundance) called logIgGnegAbundance
+
+IgGneg <- bugs %>% filter(Population == "IgA-IgM-IgG-") %>%
+group_by(SampleID) %>%
+mutate(logIgGnegAbundance = log(abundance)) %>%
+arrange(desc(abundance))
+
+#filtering all rows for Feces population
+Feces <- bugs %>% filter(SampleType == "Feces") %>%
+group_by(SampleID) %>%
+mutate(logIgGnegAbundance = log(abundance)) %>%
+arrange(desc(abundance))
+
+
+#
+IgGneg %>% group_by(study_group, Household) %>% summarize(asd = mean(logIgGnegAbundance))
+
+#combining IgG and IgGneg by OTUID, Household, and study_group, creating ratio as IgG/IgGneg
+combinedIgGplusneg <- IgG %>% left_join(IgGneg, by = c( "OTUID", "Household","study_group")) %>%
+  mutate(ratio = logIgGAbundance / logIgGnegAbundance) %>%
+  arrange((ratio))
+
+#plotting IgG+/IgG-
+
+ggplot(IgG, aes(x=OTUID, y=logIgGAbundance, color = study_group)) + geom_point() + theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) + facet_wrap(~ Household) + geom_text(size = .7, aes(label=ifelse(abundance>.2,as.character(bugname),'')),hjust=-0.1,vjust=-0.1)
+
+ggplot(IgG, aes(x=OTUID, y=abundance, color = study_group)) + geom_point() + theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  geom_text(size = 1.5, aes(label=ifelse(abundance>.15,as.character(bugname),'')),hjust=-0.1,vjust=-0.1) + ggtitle("Microbes in IgG+IgM- fraction")
+
+#combining IgG and Feces by OTUID, Household, and study_group, creating ratio as IgG/IgGneg
+combinedIgGplusFeces <- IgG %>% left_join(Feces, by = c( "OTUID", "Household","study_group")) %>%
+  mutate(ratio = logIgGAbundance / logIgGnegAbundance) %>%
+  arrange((ratio))
+
+view(combinedIgGplusFeces)
+
+ggplot(combinedIgGplusFeces, aes(x=OTUID, y=ratio, color = study_group)) + geom_point(alpha = 1) + theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  geom_text(size = 2, aes(label=ifelse(ratio>3,as.character(bugname),'')),hjust=-0.1,vjust=-0.1) + ggtitle("Microbes enriched IgG+IgM- fraction vs Feces")
+
+```
+
+```{r}
+
+#starting dataset, only samples with IgG population
+view(IgG)
+
+#filtering IgG population for bugs more than 0.01
+highabundancebugs <- IgG %>% group_by(OTUID) %>%
+  summarize(meanOTU = mean(abundance)) %>%
+  filter(meanOTU > .001)
+
+#making bugnames2
+bugnames2 <- IgG %>% select(OTUID, bugname)
+
+#addingbugnames to filterstring
+highabundancebugs <- highabundancebugs %>% left_join(bugnames, by = "OTUID")
+
+view(highabundancebugs)
+
+#makingfilterstring
+filterstring <- highabundancebugs$OTUID 
+str(filterstring) 
+view(filterstring)
+
+#filtering IgG and IgGneg by filterstring
+highabundancebugs_IgG <- IgG %>% filter(OTUID %in% filterstring)%>% arrange(bugname)
+highabundancebugs_IgGneg <- IgGneg %>% filter(OTUID %in% filterstring) %>% arrange(bugname)
+
+#combining the filtered tables and looking for enrichment
+combinedhigh_IgGplusneg <- highabundancebugs_IgG %>% left_join(highabundancebugs_IgGneg, by = c( "OTUnumber", "Household","study_group")) %>%
+  mutate(logratio = logIgGAbundance - logIgGnegAbundance) %>%
+  arrange((logratio))
+
+combinedhigh_IgGplusneg <- combinedhigh_IgGplusneg %>%
+  mutate(ratio = abundance.x / abundance.y) %>%
+  arrange((ratio))
+
+view(combinedhigh_IgGplusneg)
+
+#graphing the ratio
+ggplot(combinedhigh_IgGplusneg, aes(x=OTUID.x, y=ratio, color = study_group)) + geom_point() + theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) + geom_text(size = 2, aes(label=ifelse(ratio>1.5,as.character(bugname.x),'')),hjust=-0.1,vjust=-.1) + ggtitle("logratio comparison for OTUs > 0.01 in IgG+ fraction")
+
+#taking median ratio of each OTU for cases and controls
+medianratio <- combinedhigh_IgGplusneg %>% group_by(study_group, OTUnumber, bugname.x) %>% summarize(medianratio = median(ratio))
+
+view(medianratio)
+
+#graphing median ratio by case and control
+ggplot(medianratio, aes(x=OTUnumber, y=medianratio, color=study_group)) + geom_point() + theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) + geom_text(size = 2, aes(label=ifelse(medianratio>1.5,as.character(bugname.x),'')),hjust=-0.1,vjust=-.1)
+
+view(medianratio)
+
+#filtering Cases
+medianratiocases <- medianratio %>% filter(study_group == "Case")
+
+#filtering controls and adding to cases
+
+IgGenrichment <- medianratio %>% filter(study_group == "Control") %>% left_join(medianratiocases, by = "OTUnumber", "study_group")
+
+#calculating enrichment
+IgGenrichment <- IgGenrichment %>% mutate(enrichment = medianratio.y / medianratio.x) %>% arrange(desc(enrichment))
+
+view(IgGenrichment)
+
+#making OTUnumber afactor
+IgGenrichment$OTUnumber <- as.factor(IgGenrichment$OTUnumber)
+
+
+#final graph
+ggplot(IgGenrichment, aes(x=OTUnumber, y=enrichment)) + geom_point() + theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) + geom_text(size = 1.5, aes(label=ifelse(enrichment < .5,as.character(bugname.x.x),'')),hjust=-0.1,vjust=-.1) + geom_text(size = 1.5, aes(label=ifelse(enrichment > 2 ,as.character(bugname.x.x),'')),hjust=-0.1,vjust=-.1) + ggtitle("Median enrichment in the 80 OTUs that were > 0.001 in abundance \n calculation: IgG+ fraction / IgG - fraction, case / control") + scale_y_log10()
+
+#mann whitney on all 80 OTUs for Cases and Controls, sort by P value, then observe that OTU in cases in controls.
+
+pvalue <- combinedhigh_IgGplusneg %>% select(taxonomy.x, OTUnumber, bugname.x, SampleID.x, abundance.x, SampleID.y, abundance.y, Household) %>% group_by(OTUnumber, Household)
+
+hi <- pvalue[which(pvalue$OTUnumber == 2), ]
+bye <- wilcox.test(hi$abundance.x,hi$abundance.y)
+
+IgGenrichment[, "MWtest_pvalue"] <- NA
+
+for (i in 1:nrow(IgGenrichment)){
+  for (j in 1:nrow(pvalue)){
+    if (IgGenrichment$OTUnumber[i] == pvalue$OTUnumber[j]){
+      hi <- pvalue[which(pvalue$OTUnumber == pvalue$OTUnumber[j]), ]
+      bye <- wilcox.test(hi$abundance.x, hi$abundance.y)
+      IgGenrichment$MWtest_pvalue[i] <- bye$p.value
+    }
+  }
+}
+
+str(IgGenrichment)
+
+IgGenrichment$MWtest_pvalue <- as.numeric(IgGenrichment$MWtest_pvalue)
+
+view(IgGenrichment %>% arrange(MWtest_pvalue))
+
+ggplot(IgGenrichment, aes(x=enrichment, y=MWtest_pvalue)) + geom_point() + scale_x_log10() + scale_y_log10() + geom_text(size = 2, aes(label=ifelse(MWtest_pvalue < .001 ,as.character(bugname.x.x),'')),hjust=-0.1,vjust=-.1)
+
+str(pvalue)
+
+```
+
+### exploring the Feces population
+```{r}
+#starting dataset, only samples with IgG population
+view(Feces)
+
+#filtering IgG population for bugs more than 0.01
+highabundancebugsFeces <- Feces %>% group_by(OTUID) %>%
+  summarize(meanOTU = mean(abundance)) %>%
+  filter(meanOTU > .001)
+
+view(highabundancebugsFeces)
+
+#making bugnames2
+bugnames2 <- Feces %>% select(OTUID, bugname)
+
+#addingbugnames to filterstring
+highabundancebugsFeces <- highabundancebugsFeces %>% left_join(bugnames, by = "OTUID")
+
+view(highabundancebugsFeces)
+
+#makingfilterstring
+filterstringFeces <- highabundancebugsFeces$OTUID 
+str(filterstringFeces) 
+view(filterstringFeces)
+
+#filtering IgG and IgGneg by filterstring
+highabundancebugs_Feces <- Feces %>% filter(OTUID %in% filterstringFeces)%>% arrange(bugname)
+
+#taking median ratio of each OTU for cases and controls
+medianabundanceFeces <- highabundancebugs_Feces %>% group_by(study_group, OTUnumber, bugname) %>% summarize(medianabundance = median(abundance))
+
+view(medianabundanceFeces)
+
+#graphing median ratio by case and control
+ggplot(medianabundanceFeces, aes(x=OTUnumber, y=medianabundance, color=study_group)) + geom_point() + theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) + geom_text(size = 2, aes(label=ifelse(medianabundance>0.01,as.character(bugname),'')),hjust=-0.1,vjust=-.1)
+
+#filtering Cases
+medianabundancecases <- medianabundanceFeces %>% filter(study_group == "Case")
+
+#filtering controls and adding to cases
+
+Fecesenrichment <- medianabundanceFeces %>% filter(study_group == "Control") %>% left_join(medianabundancecases, by = "OTUnumber", "study_group")
+
+#calculating enrichment
+Fecesenrichment <- Fecesenrichment %>% mutate(enrichment = medianabundance.y / medianabundance.x) %>% arrange(desc(enrichment))
+
+view(Fecesenrichment)
+
+#making OTUnumber afactor
+Fecesenrichment$OTUnumber <- as.integer(Fecesenrichment$OTUnumber)
+
+#final graph labeled bugnames
+ggplot(Fecesenrichment, aes(x=OTUnumber, y=enrichment)) + geom_point() + theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) + geom_text(size = 3, aes(label=ifelse(enrichment < .2,as.character(bugname.x),'')),hjust=-0.1,vjust=-.1) + geom_text(size = 2, aes(label=ifelse(enrichment > 5 ,as.character(bugname.x),'')),hjust=-0.1,vjust=-.1) + ggtitle("Median enrichment in the 80 OTUs that were > 0.001 in abundance \n calculation: Feces fraction, case / control") + scale_y_log10() 
+
+#finalgraph labeled OTUnumbers
+ggplot(Fecesenrichment, aes(x=OTUnumber, y=enrichment)) + geom_point() + theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) + geom_text(size = 3, aes(label=ifelse(enrichment < .2,as.character(bugname.x),'')),hjust=-0.1,vjust=-.1) + geom_text(size = 3, aes(label=ifelse(enrichment > 5 ,as.character(bugname.x),'')),hjust=-0.1,vjust=-.1) + ggtitle("Median enrichment in the 80 OTUs that were > 0.001 in abundance \n calculation: Feces fraction, case / control") + scale_y_log10() + geom_text(size = 3, aes(label=ifelse(enrichment > 5,as.character(OTUnumber),'')),hjust=1,vjust=1) + geom_text(size = 3, aes(label=ifelse(enrichment < .2 ,as.character(OTUnumber),'')),hjust=1,vjust=1)
+
+
+
+Fecesenrichment <- Fecesenrichment %>% arrange(desc(enrichment)) %>% left_join(select(bugnames, c(OTUnumber,taxonomy)), by = "OTUnumber")
+
+IgGneg %>% group_by(OTUID) %>%
+  summarize(meanOTU = mean(abundance)) %>%
+  filter(meanOTU > .001)
+
+```
+
+### case / controls
+
+```{r}
+controls <- bugs %>% filter(study_group == "Control") %>%
+group_by(Household, OTUID, Population) %>%
+summarize(averagenormalizedreads = mean(normalizedreads))
+
+bugs <- bugs %>% left_join(controls, by = c("Household", "OTUID", "Population"))
+
+cases <- bugs %>% filter(study_group == "Case") %>%
+mutate(enrichment = normalizedreads / averagenormalizedreads) %>%
+arrange(desc(enrichment))
+
+```
+
+###graphs
+
+ggplot(cases, aes(x=taxonomy, y=enrichment, color=study_group)) + geom_point() + facet_wrap(~ Population)
+
+IgG+
+IgG-
+
+
+linear mixed effects model
