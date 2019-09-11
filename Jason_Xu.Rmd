@@ -1,0 +1,61 @@
+---
+title: "Jason Xu"
+author:
+  - "CHOP Microbiome Center"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    highlight: tango
+    number_sections: no
+    theme: default
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+---
+
+```{r, echo = FALSE}
+### ================
+###   knitr setup
+### ================
+
+library(knitr)
+opts_chunk$set(
+  tidy = FALSE,
+  cache = FALSE,
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  dpi = 100,
+  fig.align = "center",
+  fig.width = 6,
+  fig.height = 6
+  )
+```
+
+```{r, message = FALSE}
+### ================
+###   R packages
+### ================
+
+library(tidyverse)
+library(qiimer)
+library(pander)
+library(vegan)
+library(ape)
+library(pheatmap)
+library(ggpubr)
+library(DT)
+library(yaml)
+```
+
+```{r}
+source("../../6_Misc/R_utils/helper_functions.R")
+```
+
+```{r}
+s_fp <- "Data_from_Jason/metadata_idaho-combined-final.tsv"
+s <- read_tsv(s_fp)
+```
+
