@@ -1,2 +1,2 @@
 # Jason_Xu
-IgA IgM
+IgA project, run contamination analysis using regression
